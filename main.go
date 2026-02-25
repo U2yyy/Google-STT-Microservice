@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"gabby-proxy/utils"
+	"stt/utils"
 	"io"
 	"log"
 	"log/slog"
