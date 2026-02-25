@@ -575,14 +575,19 @@ func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.C
 		for {
 			select {
 			case <-stopSignal:
-				if len(buffer) > 0 {
+				for len(buffer) > 0 {
+					sendSize := chunkSize
+					if len(buffer) < chunkSize {
+						sendSize = len(buffer)
+					}
 					err := stream.Send(&speechpb.StreamingRecognizeRequest{
-						StreamingRequest: &speechpb.StreamingRecognizeRequest_Audio{Audio: buffer},
+						StreamingRequest: &speechpb.StreamingRecognizeRequest_Audio{Audio: buffer[:sendSize]},
 					})
 					if err != nil {
 						logger.Info("error in sending the last buffer:", err)
 						return
 					}
+					buffer = buffer[sendSize:]
 				}
 				err := stream.CloseSend()
 				if err != nil {
