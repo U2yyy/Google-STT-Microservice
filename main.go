@@ -519,7 +519,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // sst主逻辑
-func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.Context, lang string, mu *sync.Mutex, stopSignal chan struct{}, logger *slog.Logger) {
+func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.Context, lang string, mu *sync.Mutex, stopSignal <-chan struct{}, logger *slog.Logger) {
 	stream, err := speechClient.StreamingRecognize(ctx)
 
 	if err != nil {
@@ -546,7 +546,7 @@ func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.C
 					DecodingConfig: &speechpb.RecognitionConfig_ExplicitDecodingConfig{
 						ExplicitDecodingConfig: &speechpb.ExplicitDecodingConfig{
 							Encoding:          speechpb.ExplicitDecodingConfig_LINEAR16,
-							SampleRateHertz:   16000,
+							SampleRateHertz:   defaultSampleRateHz,
 							AudioChannelCount: 1,
 						},
 					},
@@ -569,53 +569,19 @@ func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.C
 		return
 	}
 
-	go func() {
-		const chunkSize = 25600
-		buffer := make([]byte, 0, chunkSize*2)
-		for {
-			select {
-			case <-stopSignal:
-				for len(buffer) > 0 {
-					sendSize := chunkSize
-					if len(buffer) < chunkSize {
-						sendSize = len(buffer)
-					}
-					err := stream.Send(&speechpb.StreamingRecognizeRequest{
-						StreamingRequest: &speechpb.StreamingRecognizeRequest_Audio{Audio: buffer[:sendSize]},
-					})
-					if err != nil {
-						logger.Info("error in sending the last buffer:", err)
-						return
-					}
-					buffer = buffer[sendSize:]
-				}
-				err := stream.CloseSend()
-				if err != nil {
-					logger.Info("error in closing the stream:", err)
-					return
-				}
-				return
-			case data, ok := <-audioChannel:
-				if !ok {
-					logger.Info("stream closed already")
-					return
-				}
-				buffer = append(buffer, data...)
-				for len(buffer) >= chunkSize {
-					err := stream.Send(&speechpb.StreamingRecognizeRequest{
-						StreamingRequest: &speechpb.StreamingRecognizeRequest_Audio{Audio: buffer[:chunkSize]},
-					})
-					if err != nil {
-						logger.Info("error in sending streaming buffer:", err)
-						return
-					}
-					buffer = buffer[chunkSize:]
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	vadConfig := loadVADConfigFromEnv(logger)
+	vad, err := newEnergyVAD(vadConfig)
+	if err != nil {
+		_ = stream.CloseSend()
+		mu.Lock()
+		fkClose(conn, CodeGoogleConfigError, "invalid VAD config")
+		mu.Unlock()
+		logger.Info("failed to initialize VAD", "error", err)
+		return
+	}
+
+	forwarder := newAudioForwarder(stream, audioChannel, stopSignal, logger, vad)
+	go forwarder.run(ctx)
 
 	type StreamReceive struct {
 		Res *speechpb.StreamingRecognizeResponse
@@ -636,20 +602,20 @@ func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.C
 		}
 	}()
 
-	isStoping := false
+	isStopping := false
 
 	// 用引用法消除刷屏问题
 	signalCh := stopSignal
 
 	for {
 		var timeoutChan <-chan time.Time
-		if isStoping {
+		if isStopping {
 			timeoutChan = time.After(2 * time.Second)
 		}
 
 		select {
 		case <-signalCh:
-			isStoping = true
+			isStopping = true
 			signalCh = nil
 			logger.Info("⏳ Waiting for final Google response...")
 			continue
