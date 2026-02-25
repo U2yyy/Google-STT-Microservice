@@ -278,7 +278,7 @@ var upgrader = websocket.Upgrader{
 
 // websocket处理发来的文件流
 func websocketHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println("%sWebSocket read start")
+	log.Println("WebSocket read start")
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -350,12 +350,12 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		connLogger.Info("error happened in websocket connect!", err)
+		connLogger.Info("error happened in websocket connect", "error", err)
 		return
 	}
 	defer func(conn *websocket.Conn) {
 		if err := conn.Close(); err != nil {
-			connLogger.Info(" close WebSocket error,non-fatal:", err)
+			connLogger.Info("close WebSocket error, non-fatal", "error", err)
 		}
 	}(conn)
 
@@ -472,7 +472,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msg.err != nil {
-				connLogger.Info("websocket closed!", msg.err)
+				connLogger.Info("websocket closed", "error", msg.err)
 				return
 			}
 
@@ -526,7 +526,7 @@ func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.C
 		mu.Lock()
 		fkClose(conn, CodeFailedConnectGoogle, "Google connection failed")
 		mu.Unlock()
-		logger.Info("Failed to connect to Google: %v", err)
+		logger.Info("failed to connect to Google", "error", err)
 		// 延迟一秒给客户端反应时间，再关闭
 		time.Sleep(500 * time.Millisecond)
 		return
@@ -565,7 +565,7 @@ func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.C
 
 	if err != nil {
 		fkClose(conn, CodeGoogleConfigError, "send Google StreamingRecognize config failed")
-		logger.Info("Failed on send Google StreamingRecognize config:", err)
+		logger.Info("failed to send Google StreamingRecognize config", "error", err)
 		return
 	}
 
@@ -596,7 +596,7 @@ func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.C
 			resp, err := stream.Recv()
 			recvChan <- StreamReceive{resp, err}
 			if err != nil {
-				logger.Info("create receiving stream failed:", err)
+				logger.Info("receiving stream ended", "error", err)
 				return
 			}
 		}
@@ -646,7 +646,7 @@ func realTimeSST(conn *websocket.Conn, audioChannel <-chan []byte, ctx context.C
 					fkClose(conn, CodeSuccess, "Connection closed successfully")
 				} else {
 					// 异常结束
-					logger.Info("❌ Google Error: %v", res.Err)
+					logger.Info("Google streaming error", "error", res.Err)
 					fkClose(conn, CodeStreamBroken, "stream_broken")
 				}
 				mu.Unlock()
