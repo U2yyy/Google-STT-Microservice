@@ -1,4 +1,4 @@
-module gabby-proxy
+module stt
 
 go 1.25.0
 
